@@ -37,9 +37,8 @@ jobs:
         cd ~/android/aosp
         make -j$(nproc)
 
-    -     - name: Upload ROM artifact
+    - name: Upload ROM artifact
       uses: actions/upload-artifact@v4
       with:
         name: aosp-gtp3100
         path: ~/android/aosp/out/target/product/p3100/*.zip
-

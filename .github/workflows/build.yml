@@ -1,4 +1,4 @@
-name: Build GT-P3100 Lightweight ROM (Lineage 14.1 Final)
+name: Build GT-P3100 ROM (FINAL ATTEMPT)
 
 on:
   workflow_dispatch:
@@ -7,224 +7,75 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-      ROM_BRANCH: lineage-14.1
-      DEVICE_MAIN: p3100
-      DEVICE_FALLBACK: espresso3g
+      ROM_BRANCH: cm-14.1
+      DEVICE: p3100
       CCACHE_SIZE: 5G
       SRC: $HOME/android/lineage
 
     steps:
-    # --------------------------
-    # Checkout (your small repo)
-    # --------------------------
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    # --------------------------
-    # Free up runner disk space
-    # --------------------------
-    - name: Free up runner space
+    - name: Install Dependencies
       run: |
-        echo "=== Freeing disk space on runner ==="
-        sudo rm -rf /usr/share/dotnet || true
-        sudo rm -rf /opt/ghc || true
-        sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-        sudo apt-get clean
-        df -h
-
-    # --------------------------
-    # Install build dependencies
-    # --------------------------
-    - name: Install build dependencies
-      run: |
-        sudo dpkg --add-architecture i386
         sudo apt-get update
-        sudo apt-get install -y \
-          git-core gnupg flex bison build-essential zip curl \
-          zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 \
-          lib32ncurses5-dev x11proto-core-dev libx11-dev lib32z1-dev \
-          libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig \
-          python-is-python3 python3 bc ccache repo \
-          openjdk-8-jdk-headless openjdk-11-jdk-headless
+        sudo apt-get install -y git-core gnupg flex bison build-essential zip curl \
+        zlib1g-dev gcc-multilib g++-multilib libc6-dev-i386 lib32ncurses5-dev \
+        x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils \
+        xsltproc unzip fontconfig python-is-python3 bc ccache repo openjdk-8-jdk-headless
         java -version
-        df -h
 
-    # --------------------------
-    # Git identity (repo requires)
-    # --------------------------
-    - name: Configure git identity
+    - name: Configure git
       run: |
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
 
-    # --------------------------
-    # Create source root (empty)  
-    # --------------------------
-    - name: Create source root
-      run: |
-        mkdir -p "$SRC"
+    - name: Prepare Source Directory
+      run: mkdir -p "$SRC"
 
-    # --------------------------
-    # repo init (retry x3)
-    # --------------------------
-    - name: repo init
+    - name: Repo Init
+      run: |
+        cd "$SRC"
+        repo init -u https://github.com/LineageOS/android.git -b "$ROM_BRANCH" || exit 1
+
+    - name: Repo Sync
       run: |
         cd "$SRC"
         n=0
         until [ $n -ge 3 ]; do
-          echo "Attempt $((n+1)) of repo init..."
-          if repo init -u https://github.com/LineageOS/android.git -b "$ROM_BRANCH" --depth=1; then
-            echo "repo init success."
-            break
-          fi
+          echo "Attempt $((n+1)) for repo sync..."
+          repo sync -c --no-clone-bundle --no-tags -j4 && break
           n=$((n+1))
-          echo "repo init failed. Retrying in 15s..."
-          sleep 15
-        done
-        if [ $n -ge 3 ]; then
-          echo "repo init FAILED after 3 attempts." >&2
-          exit 1
-        fi
-
-    # --------------------------
-    # Write local manifest (GT-P3100 / espresso3g)
-    # Must be after repo init (so .repo exists)
-    # --------------------------
-    - name: Write local manifest
-      run: |
-        mkdir -p "$SRC/.repo/local_manifests"
-        cat > "$SRC/.repo/local_manifests/p3100.xml" <<'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <manifest>
-          <!-- Remotes -->
-          <remote  name="lineage" fetch="https://github.com/LineageOS" />
-          <remote  name="muppets" fetch="https://github.com/TheMuppets" />
-
-          <!-- Device: GT-P3100 / espresso3g -->
-          <project path="device/samsung/espresso3g"     name="android_device_samsung_espresso3g"     remote="lineage" revision="lineage-14.1" />
-          <project path="device/samsung/espresso-common" name="android_device_samsung_espresso-common" remote="lineage" revision="lineage-14.1" />
-          <project path="device/samsung/omap4-common"    name="android_device_samsung_omap4-common"    remote="lineage" revision="lineage-14.1" />
-
-          <!-- Kernel -->
-          <project path="kernel/samsung/omap4"           name="android_kernel_samsung_omap4"           remote="lineage" revision="lineage-14.1" />
-
-          <!-- Vendor blobs -->
-          <project path="vendor/samsung"                 name="proprietary_vendor_samsung"             remote="muppets" revision="lineage-14.1" />
-        </manifest>
-        EOF
-        echo "Local manifest created:"
-        cat "$SRC/.repo/local_manifests/p3100.xml"
-
-    # --------------------------
-    # repo sync (retry x3, shrinking network usage)
-    # --------------------------
-    - name: repo sync
-      run: |
-        cd "$SRC"
-        n=0
-        until [ $n -ge 3 ]; do
-          echo "repo sync attempt $((n+1))..."
-          if repo sync -c --no-tags --no-clone-bundle --optimized-fetch --prune -j4; then
-            echo "repo sync success."
-            break
-          fi
-          n=$((n+1))
-          echo "repo sync failed. Retrying in 30s..."
           sleep 30
         done
         if [ $n -ge 3 ]; then
-          echo "repo sync FAILED after 3 attempts." >&2
+          echo "Repo sync failed after 3 attempts."
           exit 1
         fi
-        df -h
 
-    # --------------------------
-    # Inject lightweight config (remove bloat)
-    # Uses filter-out so we don't break product
-    # --------------------------
-    - name: Inject lightweight config
-      run: |
-        cat > "$SRC/remove_packages.mk" <<'EOF'
-        # Remove unneeded packages to keep ROM light
-        _REMOVE_PKGS := Calendar Email Exchange2 Gallery2 BasicDreams Browser Music MusicFX HTMLViewer LiveWallpapers LiveWallpapersPicker QuickSearchBox
-        PRODUCT_PACKAGES := $(filter-out $(_REMOVE_PKGS),$(PRODUCT_PACKAGES))
-        # No GApps included by default in LineageOS. User may flash later.
-        EOF
-        echo "remove_packages.mk created:"
-        cat "$SRC/remove_packages.mk"
-
-    # --------------------------
-    # Environment setup & lunch
-    # --------------------------
-    - name: Environment setup & lunch
+    - name: Lunch Environment
       run: |
         cd "$SRC"
-        # Force Java 8 (correct for Lineage 14.1)
         export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
         export PATH=$JAVA_HOME/bin:$PATH
         export USE_CCACHE=1
-        export CCACHE_DIR=$HOME/.ccache
-        export ALLOW_MISSING_DEPENDENCIES=true
         ccache -M $CCACHE_SIZE
         source build/envsetup.sh
+        lunch lineage_${DEVICE}-userdebug
 
-        # Try main device (p3100); fallback to espresso3g
-        if lunch lineage_${DEVICE_MAIN}-userdebug 2>/dev/null; then
-          echo "Lunch lineage_${DEVICE_MAIN}-userdebug OK"
-        else
-          echo "Falling back to lineage_${DEVICE_FALLBACK}-userdebug"
-          lunch lineage_${DEVICE_FALLBACK}-userdebug
-        fi
-
-        # Try to include our remove_packages.mk in the product .mk
-        PROD_MK="device/samsung/espresso3g/lineage_${DEVICE_FALLBACK}.mk"
-        ALT_MK="device/samsung/${DEVICE_MAIN}/lineage_${DEVICE_MAIN}.mk"
-        if [ -f "$PROD_MK" ]; then
-          grep -q 'remove_packages.mk' "$PROD_MK" || echo 'include $(TOPDIR)remove_packages.mk' >> "$PROD_MK"
-        elif [ -f "$ALT_MK" ]; then
-          grep -q 'remove_packages.mk' "$ALT_MK" || echo 'include $(TOPDIR)remove_packages.mk' >> "$ALT_MK"
-        else
-          echo "Warning: product makefile not found; skipping lightweight include."
-        fi
-
-        df -h
-        ccache -s || true
-
-    # --------------------------
-    # Build ROM (bacon) w/ fallback
-    # --------------------------
     - name: Build ROM
       run: |
         cd "$SRC"
         export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
         export PATH=$JAVA_HOME/bin:$PATH
-        export USE_CCACHE=1
-        export CCACHE_DIR=$HOME/.ccache
-        export ALLOW_MISSING_DEPENDENCIES=true
+        mka bacon -j$(nproc) || make bacon -j1
 
-        echo "Starting parallel build..."
-        (mka bacon -j$(nproc) 2>&1 | tee build.log) || (
-          echo "Parallel build failed. Retrying single-thread..."
-          make bacon -j1 2>&1 | tee build_retry.log
-        )
-
-        echo "Build step finished."
-        df -h
-        ccache -s || true
-
-    # --------------------------
-    # Upload artifacts (ROM + logs)
-    # Always run so we get logs even on failure
-    # --------------------------
-    - name: Upload ROM & logs
+    - name: Upload Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: gtp3100-light-rom
+        name: gtp3100-rom
         path: |
           ${{ env.SRC }}/out/target/product/*/*.zip
-          ${{ env.SRC }}/out/target/product/*/recovery*.img
           ${{ env.SRC }}/out/target/product/*/boot*.img
-          ${{ env.SRC }}/build.log
-          ${{ env.SRC }}/build_retry.log
-        if-no-files-found: warn
+          ${{ env.SRC }}/out/target/product/*/recovery*.img
